@@ -52,11 +52,15 @@
   .chip{padding:7px 11px;border:0;border-radius:999px;background:#e7ebf5;color:#16203a;font-size:13px;font-weight:600}
   .chip.add{background:#fff;border:1px dashed #0b5fff;color:#0b5fff}
   #search{margin:0 0 10px 0}
+  #offAlert{position:fixed;top:42px;left:0;right:0;z-index:6;background:#e03131;color:#fff;padding:10px 14px;font-weight:700;font-size:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .sc{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:8px;font-size:13px;flex-wrap:wrap}
+  .sc .btn{padding:6px 10px;font-size:12px}
 </style>
 </head>
 <body>
 <header><span>RSU Campus Guide</span><small>Record the way. Never get lost.</small></header>
 <div id="map"></div>
+<div id="offAlert" class="hide"></div>
 
 <div id="panel">
   <div class="tabs">
@@ -70,6 +74,10 @@
       <div class="stat"><b id="sDist">0 m</b><span>Distance</span></div>
       <div class="stat"><b id="sPts">0</b><span>Points</span></div>
     </div>
+    <div id="shortBox" class="hide">
+      <div class="hint" id="shortInfo" style="margin:0 0 6px 0"></div>
+      <button class="btn red" id="btnShortCancel" type="button" style="margin-bottom:8px">Cancel shortcut mode</button>
+    </div>
     <button class="big" id="btnStart">▶ Start walking</button>
     <div class="tools" id="tools">
       <button id="btnIndoor">🏢 Indoor mode</button>
@@ -82,7 +90,7 @@
     <div class="hint" id="calMsg">Tip: tap Calibrate, then walk about 40 steps in a straight line outside so the app learns your real step length.</div>
 
     <div id="saveBox" class="hide">
-      <h3 style="margin:6px 0">Save this route</h3>
+      <h3 style="margin:6px 0" id="saveTitle">Save this route</h3>
       <div class="hint" style="margin-top:0">Where did you walk to? Tap a place, or type your own name:</div>
       <div class="chips" id="placeChips"></div>
       <input type="text" id="rName" placeholder="Name, e.g. Gate to Provost Office">
@@ -122,6 +130,7 @@
   var indoor = false, cps = [], steps = 0, heading = null, hsmooth = null, ipos = null, motionOn = false, gAvg = 9.8, sFilt = 0, lastStepT = 0;
   var cpMarkers = L.layerGroup().addTo(map);
   var calibrating = false, calSteps = 0, calFirst = null, calLast = null, calDist = 0;
+  var followRoute = null, offState = false, offTrail = [], lastOn = null, offLine = null, backLine = null, shortcutRoute = null;
   var cpIcon = L.divIcon({className:'', html:'<div class="cpdot"></div>', iconSize:[16,16], iconAnchor:[8,8]});
 
   function $(id){ return document.getElementById(id); }
@@ -198,6 +207,7 @@
       map.panTo([lat,lng]);
       $('sDist').textContent=fmtDist(dist); $('sPts').textContent=pts.length;
     } else if(following){
+      checkOffRoute(lat,lng,acc);
       map.panTo([lat,lng]);
     }
   }
@@ -205,7 +215,7 @@
   /* ---------- Record controls ---------- */
   $('btnStart').onclick = function(){
     if(!recording){
-      viewLayer.clearLayers(); following=false; cpMarkers.clearLayers(); cps=[]; steps=0; setIndoor(false); stopCal(false);
+      if(!shortcutRoute) viewLayer.clearLayers(); following=false; resetOff(); liveLine.setStyle({color: shortcutRoute ? '#14a44d' : '#0b5fff'}); cpMarkers.clearLayers(); cps=[]; steps=0; setIndoor(false); stopCal(false);
       pts=[]; dist=0; liveLine.setLatLngs([]); t0=Date.now();
       recording=true; $('saveBox').classList.add('hide');
       $('btnStart').textContent='■ Stop'; $('btnStart').classList.add('stop');
@@ -217,12 +227,15 @@
       recording=false; clearInterval(timer); stopWatch(); setIndoor(false); $('tools').classList.remove('on');
       $('btnStart').textContent='▶ Start walking'; $('btnStart').classList.remove('stop');
       if(pts.length<2){ $('status').textContent='Route too short. Try again and walk a bit further.'; return; }
-      $('status').textContent='Done! Name your route below.';
+      if(shortcutRoute && !prepShortcut()) return;
+      $('saveTitle').textContent = shortcutRoute ? 'Save this shortcut' : 'Save this route';
+      $('status').textContent = shortcutRoute ? 'Done! Give your shortcut a name (optional), then save it.' : 'Done! Name your route below.';
       $('saveBox').classList.remove('hide'); $('rName').focus();
     }
   };
   $('btnSave').onclick = function(){
     var name=$('rName').value.trim();
+    if(shortcutRoute){ saveShortcut(name); return; }
     if(!name){ $('rName').focus(); return; }
     var all=load();
     all.unshift({id:Date.now(), name:name, note:$('rNote').value.trim(), pts:pts, cps:cps, dist:dist, dur:(pts[pts.length-1].t-pts[0].t)/1000, date:new Date().toISOString()});
@@ -290,6 +303,7 @@
     if(r.note) t+=r.note+'\n';
     buildSteps(r).forEach(function(s,i){ t+=(i+1)+'. '+s+'\n'; });
     (r.cps||[]).forEach(function(c,i){ t+='Checkpoint '+(i+1)+(c.at!=null?' (after about '+Math.round(c.at)+' m)':'')+': '+(c.note||'see photo')+'\n'; });
+    (r.shortcuts||[]).forEach(function(s){ t+='Shortcut: '+(s.name||'Shortcut')+' ('+fmtDist(s.dist)+')\n'; });
     return t;
   }
 
@@ -454,9 +468,132 @@
     });
   };
 
+  /* ---------- Path geometry helpers ---------- */
+  function validPath(P){
+    return Array.isArray(P) && P.length>1 && P.every(function(p){ return p && typeof p.lat==='number' && typeof p.lng==='number'; });
+  }
+  function nearestOnPath(lat,lng,P){
+    if(!P || P.length<2) return null;
+    var ky=110540, kx=111320*Math.cos(lat*Math.PI/180), best=null;
+    for(var i=0;i<P.length-1;i++){
+      var ax=(P[i].lng-lng)*kx, ay=(P[i].lat-lat)*ky, bx=(P[i+1].lng-lng)*kx, by=(P[i+1].lat-lat)*ky;
+      var dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+      var t=l2===0 ? 0 : Math.max(0,Math.min(1,-(ax*dx+ay*dy)/l2));
+      var d=Math.hypot(ax+t*dx, ay+t*dy);
+      if(!best || d<best.d) best={d:d, i:i, t:t, lat:P[i].lat+t*(P[i+1].lat-P[i].lat), lng:P[i].lng+t*(P[i+1].lng-P[i].lng)};
+    }
+    return best;
+  }
+  function cumDist(P){
+    var c=[0];
+    for(var i=1;i<P.length;i++) c.push(c[i-1]+hav([P[i-1].lat,P[i-1].lng],[P[i].lat,P[i].lng]));
+    return c;
+  }
+  function posDist(c,n){ return c[n.i]+n.t*(c[n.i+1]-c[n.i]); }
+  function routePaths(r){
+    var a=[r.pts];
+    (r.shortcuts||[]).forEach(function(s){ if(validPath(s.pts)) a.push(s.pts); });
+    return a;
+  }
+
+  /* ---------- Off-route warning (red line) ---------- */
+  function resetOff(){
+    followRoute=null; offState=false; offTrail=[]; lastOn=null;
+    if(offLine) offLine.setLatLngs([]);
+    if(backLine) backLine.setLatLngs([]);
+    $('offAlert').classList.add('hide');
+  }
+  function checkOffRoute(lat,lng,acc){
+    if(!followRoute || acc>40) return;
+    var best=1e9, bestN=null;
+    routePaths(followRoute).forEach(function(P){
+      var n=nearestOnPath(lat,lng,P);
+      if(n && n.d<best){ best=n.d; bestN=n; }
+    });
+    if(!bestN) return;
+    var limit=Math.max(15, Math.min(acc,30)+8);
+    if(!offState && best>limit){
+      offState=true; offTrail=lastOn ? [lastOn] : [];
+      try{ if(navigator.vibrate) navigator.vibrate([300,150,300]); }catch(e){}
+    } else if(offState && best<=limit*0.7){
+      offState=false; offTrail=[];
+      if(offLine) offLine.setLatLngs([]);
+      if(backLine) backLine.setLatLngs([]);
+      $('offAlert').classList.add('hide');
+      $('status').textContent='Back on the path. Keep following the line.';
+      lastOn=[lat,lng];
+      return;
+    }
+    if(offState){
+      offTrail.push([lat,lng]);
+      if(!offLine) offLine=L.polyline([],{color:'#e03131',weight:6,opacity:.95}).addTo(map);
+      if(!backLine) backLine=L.polyline([],{color:'#e03131',weight:3,opacity:.9,dashArray:'6 8'}).addTo(map);
+      offLine.setLatLngs(offTrail);
+      backLine.setLatLngs([[lat,lng],[bestN.lat,bestN.lng]]);
+      $('offAlert').textContent='⚠ Wrong way! You are about '+Math.round(best)+' m off the path. Go back to the line.';
+      $('offAlert').classList.remove('hide');
+    } else {
+      lastOn=[lat,lng];
+    }
+  }
+
+  /* ---------- Shortcuts (green paths) ---------- */
+  function enterShortcutMode(r){
+    if(recording){ alert('Stop recording first.'); return; }
+    shortcutRoute=r; following=false; showRoute(r);
+    liveLine.setStyle({color:'#14a44d'});
+    $('shortInfo').textContent='Shortcut mode for "'+r.name+'". Stand on the blue path where you will cut out, tap Start, walk your shortcut, and tap Stop where it meets the blue path again (or at the destination).';
+    $('shortBox').classList.remove('hide');
+    showTab('rec');
+    $('status').textContent='Shortcut mode on. Tap Start when you are at the cut-out point.';
+  }
+  function exitShortcutMode(){
+    shortcutRoute=null;
+    $('shortBox').classList.add('hide');
+    liveLine.setStyle({color:'#0b5fff'});
+    $('saveTitle').textContent='Save this route';
+  }
+  $('btnShortCancel').onclick=function(){
+    if(recording){ alert('Stop recording first.'); return; }
+    exitShortcutMode(); pts=[]; cps=[]; cpMarkers.clearLayers(); liveLine.setLatLngs([]);
+    $('saveBox').classList.add('hide');
+    $('status').textContent='Shortcut mode cancelled.';
+  };
+  function prepShortcut(){
+    var a=pts[0], b=pts[pts.length-1];
+    var s=nearestOnPath(a.lat,a.lng,shortcutRoute.pts), e=nearestOnPath(b.lat,b.lng,shortcutRoute.pts);
+    if(!s || !e) return false;
+    if(s.d>40 || e.d>40){
+      $('status').textContent='A shortcut must start and end on the blue path (within about 40 m). Yours started '+Math.round(s.d)+' m and ended '+Math.round(e.d)+' m from it. Tap Start to try again.';
+      return false;
+    }
+    return true;
+  }
+  function saveShortcut(name){
+    var P=shortcutRoute.pts, a=pts[0], b=pts[pts.length-1];
+    var s=nearestOnPath(a.lat,a.lng,P), e=nearestOnPath(b.lat,b.lng,P);
+    var joined=[{lat:s.lat,lng:s.lng,t:a.t}].concat(pts,[{lat:e.lat,lng:e.lng,t:b.t}]);
+    var d=0;
+    for(var i=1;i<joined.length;i++) d+=hav([joined[i-1].lat,joined[i-1].lng],[joined[i].lat,joined[i].lng]);
+    var all=load(), idx=-1;
+    for(var k=0;k<all.length;k++){ if(all[k].id===shortcutRoute.id){ idx=k; break; } }
+    if(idx<0){ alert('The main route was not found. Save the main route first.'); return; }
+    var list=all[idx].shortcuts||[];
+    list.push({id:Date.now(), name:name||('Shortcut '+(list.length+1)), pts:joined, cps:cps, dist:d, dur:(b.t-a.t)/1000, date:new Date().toISOString()});
+    all[idx].shortcuts=list;
+    if(!store(all)) return;
+    var saved=all[idx];
+    exitShortcutMode();
+    $('rName').value=''; $('rNote').value=''; $('saveBox').classList.add('hide');
+    pts=[]; cps=[]; cpMarkers.clearLayers(); liveLine.setLatLngs([]);
+    showTab('saved');
+    showRoute(saved);
+    $('status').textContent='Shortcut saved! It shows in green.';
+  }
+
   /* ---------- Saved routes ---------- */
   function showRoute(r){
-    viewLayer.clearLayers(); liveLine.setLatLngs([]);
+    viewLayer.clearLayers(); liveLine.setLatLngs([]); resetOff();
     var ll=r.pts.map(function(p){return [p.lat,p.lng];});
     L.polyline(ll,{color:'#0b5fff',weight:6,opacity:.9}).addTo(viewLayer);
     L.circleMarker(ll[0],{radius:9,color:'#fff',weight:3,fillColor:'#14a44d',fillOpacity:1}).bindTooltip('Start',{permanent:true,direction:'top'}).addTo(viewLayer);
@@ -464,6 +601,17 @@
     (r.cps||[]).forEach(function(c,i){
       var h='<b>'+esc(c.note||('Checkpoint '+(i+1)))+'</b>'+(safePhoto(c.photo)?'<br><img src="'+c.photo+'" style="width:180px;border-radius:8px;margin-top:4px">':'');
       L.marker([c.lat,c.lng],{icon:cpIcon}).bindPopup(h).addTo(viewLayer);
+    });
+    (r.shortcuts||[]).forEach(function(s){
+      if(!validPath(s.pts)) return;
+      var sl=s.pts.map(function(p){return [p.lat,p.lng];});
+      L.polyline(sl,{color:'#14a44d',weight:6,opacity:.95}).bindTooltip(esc(s.name||'Shortcut'),{sticky:true}).addTo(viewLayer);
+      L.circleMarker(sl[0],{radius:6,color:'#fff',weight:2,fillColor:'#14a44d',fillOpacity:1}).addTo(viewLayer);
+      L.circleMarker(sl[sl.length-1],{radius:6,color:'#fff',weight:2,fillColor:'#14a44d',fillOpacity:1}).addTo(viewLayer);
+      (s.cps||[]).forEach(function(c,i){
+        var h='<b>'+esc(c.note||('Checkpoint '+(i+1)))+'</b>'+(safePhoto(c.photo)?'<br><img src="'+c.photo+'" style="width:180px;border-radius:8px;margin-top:4px">':'');
+        L.marker([c.lat,c.lng],{icon:cpIcon}).bindPopup(h).addTo(viewLayer);
+      });
     });
     map.fitBounds(L.latLngBounds(ll),{padding:[40,40]});
   }
@@ -475,8 +623,8 @@
     all.forEach(function(r){
       var d=document.createElement('div'); d.className='route';
       d.innerHTML='<h3>'+esc(r.name)+'</h3><p>'+fmtDist(r.dist)+' &middot; '+Math.max(1,Math.round(r.dur/60))+' min &middot; '+new Date(r.date).toLocaleDateString()+(r.note?'<br>'+esc(r.note):'')+'</p>'
-        +'<div class="row"><button class="btn" data-a="view">View on map</button><button class="btn grey" data-a="steps">Directions</button><button class="btn grey" data-a="walk">Walk it</button><button class="btn grey" data-a="share">Share</button><button class="btn red" data-a="del">Delete</button></div>'
-        +'<ol class="steps hide"></ol><div class="cps"></div>';
+        +'<div class="row"><button class="btn" data-a="view">View on map</button><button class="btn grey" data-a="steps">Directions</button><button class="btn grey" data-a="walk">Walk it</button><button class="btn grey" data-a="short">+ Shortcut</button><button class="btn grey" data-a="share">Share</button><button class="btn red" data-a="del">Delete</button></div>'
+        +'<ol class="steps hide"></ol><div class="cps"></div><div class="shorts"></div>';
       var g=d.querySelector('.cps');
       (r.cps||[]).forEach(function(c,i){
         var cd=document.createElement('div'); cd.className='cp';
@@ -487,6 +635,36 @@
         cd.onclick=function(){ following=false; showRoute(r); map.setView([c.lat,c.lng],19); };
         g.appendChild(cd);
       });
+      var sh=d.querySelector('.shorts');
+      (r.shortcuts||[]).forEach(function(s){
+        if(!validPath(s.pts)) return;
+        var extra='';
+        var n1=nearestOnPath(s.pts[0].lat,s.pts[0].lng,r.pts), n2=nearestOnPath(s.pts[s.pts.length-1].lat,s.pts[s.pts.length-1].lng,r.pts);
+        if(n1 && n2){
+          var cd2=cumDist(r.pts), along=Math.abs(posDist(cd2,n2)-posDist(cd2,n1)), diff=along-s.dist;
+          if(diff>3) extra=' · about '+Math.round(diff)+' m shorter';
+          else if(diff<-3) extra=' · about '+Math.round(-diff)+' m longer';
+        }
+        var row=document.createElement('div'); row.className='sc';
+        var ttl=document.createElement('div');
+        ttl.innerHTML='<b>🟢 '+esc(s.name||'Shortcut')+'</b> · '+fmtDist(s.dist)+esc(extra);
+        var btns=document.createElement('div'); btns.className='row';
+        var bs=document.createElement('button'); bs.type='button'; bs.className='btn grey'; bs.textContent='Show';
+        bs.onclick=function(){
+          following=false; showRoute(r);
+          map.fitBounds(L.latLngBounds(s.pts.map(function(p){return [p.lat,p.lng];})),{padding:[40,40]});
+        };
+        var bd=document.createElement('button'); bd.type='button'; bd.className='btn red'; bd.textContent='Delete';
+        bd.onclick=function(){
+          if(!confirm('Delete this shortcut?')) return;
+          var all2=load();
+          all2.forEach(function(x){ if(x.id===r.id) x.shortcuts=(x.shortcuts||[]).filter(function(y){return y.id!==s.id;}); });
+          store(all2); viewLayer.clearLayers(); render();
+        };
+        btns.appendChild(bs); btns.appendChild(bd);
+        row.appendChild(ttl); row.appendChild(btns); sh.appendChild(row);
+      });
+      d.querySelector('[data-a=short]').onclick=function(){ enterShortcutMode(r); };
       d.querySelector('[data-a=view]').onclick=function(){ following=false; showRoute(r); };
       d.querySelector('[data-a=steps]').onclick=function(){
         var ol=d.querySelector('.steps');
@@ -494,7 +672,7 @@
         else ol.classList.add('hide');
       };
       d.querySelector('[data-a=walk]').onclick=function(){
-        showRoute(r); following=true; startWatch();
+        showRoute(r); following=true; followRoute=r; startWatch();
         $('status').textContent='Follow the blue line. Your position is the blue dot.';
       };
       d.querySelector('[data-a=share]').onclick=function(){
@@ -524,7 +702,7 @@
         var inc=JSON.parse(rd.result), all=load(), ids={};
         all.forEach(function(r){ids[r.id]=1;});
         var n=0;
-        inc.forEach(function(r){ if(r&&r.pts&&r.name&&!ids[r.id]){ all.push(r); n++; } });
+        inc.forEach(function(r){ if(r&&validPath(r.pts)&&r.name&&!ids[r.id]){ all.push(r); n++; } });
         store(all); render(); alert(n+' route(s) imported.');
       }catch(err){ alert('That file is not a valid routes file.'); }
     };
