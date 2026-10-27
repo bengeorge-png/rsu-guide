@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b5fff">
+<title>RSU Campus Guide</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6fb;color:#16203a}
+  #map{position:fixed;inset:0 0 0 0;z-index:0}
+  header{position:fixed;top:0;left:0;right:0;z-index:5;background:#0b5fff;color:#fff;padding:10px 14px;font-weight:700;font-size:16px;display:flex;justify-content:space-between;align-items:center}
+  header small{font-weight:400;opacity:.9;font-size:12px}
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:5;background:#fff;border-radius:18px 18px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.2);max-height:58vh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
+  .tabs{display:flex;border-bottom:1px solid #e3e7f1}
+  .tabs button{flex:1;padding:12px;border:0;background:none;font-size:15px;font-weight:600;color:#6b7690}
+  .tabs button.on{color:#0b5fff;border-bottom:3px solid #0b5fff}
+  .body{overflow-y:auto;padding:14px}
+  .stats{display:flex;gap:10px;margin-bottom:12px}
+  .stat{flex:1;background:#f0f4ff;border-radius:12px;padding:10px;text-align:center}
+  .stat b{display:block;font-size:22px;color:#0b5fff}
+  .stat span{font-size:11px;color:#6b7690;text-transform:uppercase;letter-spacing:.5px}
+  .big{width:100%;padding:16px;border:0;border-radius:14px;font-size:18px;font-weight:700;color:#fff;background:#14a44d}
+  .big.stop{background:#e03131}
+  .btn{padding:9px 13px;border:0;border-radius:10px;background:#0b5fff;color:#fff;font-weight:600;font-size:14px}
+  .btn.grey{background:#e7ebf5;color:#16203a}
+  .btn.red{background:#ffe3e3;color:#c92a2a}
+  input[type=text],textarea{width:100%;padding:12px;border:1px solid #cfd6e6;border-radius:10px;font-size:16px;margin:6px 0;font-family:inherit}
+  #status{font-size:13px;color:#6b7690;margin-top:10px;text-align:center}
+  .route{border:1px solid #e3e7f1;border-radius:12px;padding:12px;margin-bottom:10px}
+  .route h3{font-size:16px;margin-bottom:2px}
+  .route p{font-size:13px;color:#6b7690;margin-bottom:8px}
+  .row{display:flex;gap:6px;flex-wrap:wrap}
+  .steps{margin:8px 0 4px 0;padding-left:20px;font-size:14px;line-height:1.6}
+  .hide{display:none}
+  .me{width:18px;height:18px;border-radius:50%;background:#0b5fff;border:3px solid #fff;box-shadow:0 0 0 3px rgba(11,95,255,.35)}
+  .empty{text-align:center;color:#6b7690;padding:20px;font-size:14px}
+  .tools{display:none;gap:8px;margin-top:10px}
+  .tools.on{display:flex}
+  .tools button{flex:1;padding:12px 8px;border:0;border-radius:12px;background:#e7ebf5;color:#16203a;font-weight:600;font-size:14px}
+  .tools button.active{background:#ff922b;color:#fff}
+  .hint{font-size:12px;color:#6b7690;margin-top:8px;line-height:1.5}
+  .cps{display:flex;gap:8px;overflow-x:auto;margin:8px 0 0 0}
+  .cp{flex:0 0 110px;font-size:12px}
+  .cp img{width:110px;height:80px;object-fit:cover;border-radius:8px;display:block}
+  .cpdot{width:16px;height:16px;border-radius:50%;background:#ff922b;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+  .setting{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:#6b7690}
+  .setting input{width:70px;padding:6px;border:1px solid #cfd6e6;border-radius:8px;font-size:14px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+  .chip{padding:7px 11px;border:0;border-radius:999px;background:#e7ebf5;color:#16203a;font-size:13px;font-weight:600}
+  .chip.add{background:#fff;border:1px dashed #0b5fff;color:#0b5fff}
+  #search{margin:0 0 10px 0}
+</style>
+</head>
+<body>
+<header><span>RSU Campus Guide</span><small>Record the way. Never get lost.</small></header>
+<div id="map"></div>
+
+<div id="panel">
+  <div class="tabs">
+    <button id="tabRec" class="on">Record</button>
+    <button id="tabSaved">Saved routes</button>
+  </div>
+
+  <div class="body" id="recView">
+    <div class="stats">
+      <div class="stat"><b id="sTime">00:00</b><span>Time</span></div>
+      <div class="stat"><b id="sDist">0 m</b><span>Distance</span></div>
+      <div class="stat"><b id="sPts">0</b><span>Points</span></div>
+    </div>
+    <button class="big" id="btnStart">▶ Start walking</button>
+    <div class="tools" id="tools">
+      <button id="btnIndoor">🏢 Indoor mode</button>
+      <button id="btnCp">📷 Checkpoint</button>
+    </div>
+    <input type="file" id="cpFile" accept="image/*" capture="environment" class="hide">
+    <div class="hint hide" id="indoorHint">Indoor mode counts your steps and uses the compass instead of GPS. Hold the phone flat in front of you and walk normally. It drifts a little over long distances, so add checkpoint photos at turns and doors.</div>
+    <div class="setting">Step length <input type="number" id="stepLen" value="70" min="30" max="120"> cm <button class="btn grey" id="btnCal" type="button">Calibrate</button></div>
+    <div class="setting">Or your height <input type="number" id="heightIn" placeholder="170" min="120" max="220"> cm <button class="btn grey" id="btnHeight" type="button">Use</button></div>
+    <div class="hint" id="calMsg">Tip: tap Calibrate, then walk about 40 steps in a straight line outside so the app learns your real step length.</div>
+
+    <div id="saveBox" class="hide">
+      <h3 style="margin:6px 0">Save this route</h3>
+      <div class="hint" style="margin-top:0">Where did you walk to? Tap a place, or type your own name:</div>
+      <div class="chips" id="placeChips"></div>
+      <input type="text" id="rName" placeholder="Name, e.g. Gate to Provost Office">
+      <textarea id="rNote" rows="2" placeholder="Notes (optional): landmarks, e.g. pass the white building"></textarea>
+      <div class="row" style="margin-top:6px">
+        <button class="btn" id="btnSave">Save route</button>
+        <button class="btn red" id="btnDiscard">Discard</button>
+      </div>
+    </div>
+    <div id="status">Tap Start, then walk. Allow location when asked.</div>
+  </div>
+
+  <div class="body hide" id="savedView">
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn grey" id="btnExport">Export all</button>
+      <button class="btn grey" id="btnImport">Import</button>
+      <input type="file" id="fileIn" accept=".json,application/json" class="hide">
+    </div>
+    <input type="text" id="search" placeholder="Search places or routes...">
+    <div id="list"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var KEY = 'rsu_routes_v1';
+  var map = L.map('map', {zoomControl:false}).setView([4.8005, 6.9790], 17);
+  L.control.zoom({position:'topright'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
+
+  var meIcon = L.divIcon({className:'', html:'<div class="me"></div>', iconSize:[18,18], iconAnchor:[9,9]});
+  var me = null, accCircle = null;
+  var liveLine = L.polyline([], {color:'#0b5fff', weight:6, opacity:.9}).addTo(map);
+  var viewLayer = L.layerGroup().addTo(map);
+
+  var recording = false, following = false, pts = [], dist = 0, t0 = 0, timer = null, watchId = null, wakeLock = null;
+  var indoor = false, cps = [], steps = 0, heading = null, hsmooth = null, ipos = null, motionOn = false, gAvg = 9.8, sFilt = 0, lastStepT = 0;
+  var cpMarkers = L.layerGroup().addTo(map);
+  var calibrating = false, calSteps = 0, calFirst = null, calLast = null, calDist = 0;
+  var cpIcon = L.divIcon({className:'', html:'<div class="cpdot"></div>', iconSize:[16,16], iconAnchor:[8,8]});
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+  function fmtDist(m){ return m < 1000 ? Math.round(m)+' m' : (m/1000).toFixed(2)+' km'; }
+  function fmtTime(s){ s=Math.floor(s); var m=Math.floor(s/60), r=s%60; return (m<10?'0':'')+m+':'+(r<10?'0':'')+r; }
+  function hav(a,b){
+    var R=6371000, r=Math.PI/180;
+    var dLat=(b[0]-a[0])*r, dLng=(b[1]-a[1])*r;
+    var x=Math.sin(dLat/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dLng/2)**2;
+    return 2*R*Math.asin(Math.sqrt(x));
+  }
+  function load(){ try{ return JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ return []; } }
+  function store(a){
+    try{ localStorage.setItem(KEY, JSON.stringify(a)); return true; }
+    catch(e){ alert('Phone storage is full. Delete old routes or photos and try again.'); return false; }
+  }
+  function safePhoto(s){ return typeof s==='string' && /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(s); }
+
+  /* ---------- Common places list ---------- */
+  var PKEY = 'rsu_places_v1';
+  var DEFAULT_PLACES = ['Main Gate','Provost Office','Library','Registry','Bursary','Student Affairs','Health Centre','Hostel','Cafeteria','Faculty Office','Lecture Hall','Exam Hall'];
+  function loadPlaces(){
+    try{ var a=JSON.parse(localStorage.getItem(PKEY)||'null'); if(Array.isArray(a)) return a.filter(function(x){return typeof x==='string';}); }catch(e){}
+    return DEFAULT_PLACES.slice();
+  }
+  function savePlaces(a){ try{ localStorage.setItem(PKEY, JSON.stringify(a)); }catch(e){} }
+  function renderChips(){
+    var box=$('placeChips'); box.innerHTML='';
+    loadPlaces().forEach(function(n){
+      var b=document.createElement('button'); b.type='button'; b.className='chip'; b.textContent=n;
+      b.onclick=function(){ $('rName').value=n; };
+      box.appendChild(b);
+    });
+    var add=document.createElement('button'); add.type='button'; add.className='chip add'; add.textContent='+ Add place';
+    add.onclick=function(){
+      var n=(prompt('Name of the new place, e.g. Faculty of Engineering','')||'').trim();
+      if(!n) return;
+      var a=loadPlaces(); if(a.indexOf(n)<0){ a.push(n); savePlaces(a); }
+      renderChips(); $('rName').value=n;
+    };
+    box.appendChild(add);
+  }
+
+  /* ---------- GPS watching ---------- */
+  function startWatch(){
+    if(watchId!==null) return;
+    if(!navigator.geolocation){ $('status').textContent='This phone/browser has no GPS support.'; return; }
+    watchId = navigator.geolocation.watchPosition(onPos, onErr, {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+    if(navigator.wakeLock){ navigator.wakeLock.request('screen').then(function(l){wakeLock=l;}).catch(function(){}); }
+  }
+  function stopWatch(){
+    if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+    if(wakeLock){ try{wakeLock.release();}catch(e){} wakeLock=null; }
+  }
+  function onErr(e){
+    var msg = e.code===1 ? 'Location is blocked. Allow location for this site in your browser settings.' :
+              e.code===2 ? 'Cannot find your location. Move to an open area.' : 'GPS is slow. Please wait...';
+    $('status').textContent = msg;
+  }
+  function onPos(p){
+    if(recording && indoor) return;
+    var lat=p.coords.latitude, lng=p.coords.longitude, acc=p.coords.accuracy;
+    if(!me){ me=L.marker([lat,lng],{icon:meIcon,zIndexOffset:1000}).addTo(map); accCircle=L.circle([lat,lng],{radius:acc,color:'#0b5fff',weight:1,fillOpacity:.08}).addTo(map); map.setView([lat,lng],18); }
+    me.setLatLng([lat,lng]); accCircle.setLatLng([lat,lng]).setRadius(acc);
+    if(calibrating){ calGps(lat,lng,acc); return; }
+    if(recording){
+      if(acc>35){ $('status').textContent='Weak GPS (±'+Math.round(acc)+' m). Keep walking in the open...'; return; }
+      $('status').textContent='Recording... GPS accuracy ±'+Math.round(acc)+' m';
+      var last=pts[pts.length-1];
+      if(last){ var d=hav([last.lat,last.lng],[lat,lng]); if(d<4) return; dist+=d; }
+      pts.push({lat:lat,lng:lng,t:Date.now()});
+      liveLine.setLatLngs(pts.map(function(q){return [q.lat,q.lng];}));
+      map.panTo([lat,lng]);
+      $('sDist').textContent=fmtDist(dist); $('sPts').textContent=pts.length;
+    } else if(following){
+      map.panTo([lat,lng]);
+    }
+  }
+
+  /* ---------- Record controls ---------- */
+  $('btnStart').onclick = function(){
+    if(!recording){
+      viewLayer.clearLayers(); following=false; cpMarkers.clearLayers(); cps=[]; steps=0; setIndoor(false); stopCal(false);
+      pts=[]; dist=0; liveLine.setLatLngs([]); t0=Date.now();
+      recording=true; $('saveBox').classList.add('hide');
+      $('btnStart').textContent='■ Stop'; $('btnStart').classList.add('stop');
+      $('sDist').textContent='0 m'; $('sPts').textContent='0'; $('sTime').textContent='00:00';
+      timer=setInterval(function(){ $('sTime').textContent=fmtTime((Date.now()-t0)/1000); },1000);
+      $('status').textContent='Getting GPS signal...'; $('tools').classList.add('on');
+      startWatch();
+    } else {
+      recording=false; clearInterval(timer); stopWatch(); setIndoor(false); $('tools').classList.remove('on');
+      $('btnStart').textContent='▶ Start walking'; $('btnStart').classList.remove('stop');
+      if(pts.length<2){ $('status').textContent='Route too short. Try again and walk a bit further.'; return; }
+      $('status').textContent='Done! Name your route below.';
+      $('saveBox').classList.remove('hide'); $('rName').focus();
+    }
+  };
+  $('btnSave').onclick = function(){
+    var name=$('rName').value.trim();
+    if(!name){ $('rName').focus(); return; }
+    var all=load();
+    all.unshift({id:Date.now(), name:name, note:$('rNote').value.trim(), pts:pts, cps:cps, dist:dist, dur:(pts[pts.length-1].t-pts[0].t)/1000, date:new Date().toISOString()});
+    if(!store(all)) return;
+    $('rName').value=''; $('rNote').value=''; $('saveBox').classList.add('hide');
+    $('status').textContent='Saved! Find it under "Saved routes".';
+    pts=[]; cps=[]; cpMarkers.clearLayers(); liveLine.setLatLngs([]);
+    showTab('saved');
+  };
+  $('btnDiscard').onclick = function(){
+    pts=[]; cps=[]; cpMarkers.clearLayers(); liveLine.setLatLngs([]); $('saveBox').classList.add('hide');
+    $('status').textContent='Discarded. Tap Start to try again.';
+  };
+
+  /* ---------- Directions from recorded path ---------- */
+  function perp(p,a,b){
+    var dx=b.x-a.x, dy=b.y-a.y, l2=dx*dx+dy*dy;
+    if(l2===0) return Math.hypot(p.x-a.x,p.y-a.y);
+    var t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/l2));
+    return Math.hypot(p.x-(a.x+t*dx), p.y-(a.y+t*dy));
+  }
+  function simplify(P,eps){
+    var keep=new Array(P.length).fill(false); keep[0]=keep[P.length-1]=true;
+    (function rec(a,b){
+      var max=0, idx=-1;
+      for(var i=a+1;i<b;i++){ var d=perp(P[i],P[a],P[b]); if(d>max){max=d;idx=i;} }
+      if(max>eps){ keep[idx]=true; rec(a,idx); rec(idx,b); }
+    })(0,P.length-1);
+    var out=[]; for(var i=0;i<P.length;i++) if(keep[i]) out.push(P[i]);
+    return out;
+  }
+  function compass(b){ return ['north','north-east','east','south-east','south','south-west','west','north-west'][Math.round(b/45)%8]; }
+  function round5(m){ return Math.max(5, Math.round(m/5)*5); }
+  function buildSteps(route){
+    var P=route.pts; if(P.length<2) return [];
+    var lat0=P[0].lat, lng0=P[0].lng, kx=111320*Math.cos(lat0*Math.PI/180), ky=110540;
+    var xy=P.map(function(p){return {x:(p.lng-lng0)*kx, y:(p.lat-lat0)*ky};});
+    var s=simplify(xy,6), segs=[];
+    for(var i=1;i<s.length;i++){
+      var dx=s[i].x-s[i-1].x, dy=s[i].y-s[i-1].y;
+      segs.push({len:Math.hypot(dx,dy), brg:(Math.atan2(dx,dy)*180/Math.PI+360)%360});
+    }
+    var out=[], cur={len:segs[0].len, brg:segs[0].brg};
+    out.push('Face '+compass(cur.brg)+' and start walking.');
+    var legs=[], turns=[];
+    for(var k=1;k<segs.length;k++){
+      var ang=((segs[k].brg-cur.brg+540)%360)-180;
+      if(Math.abs(ang)<25){ cur.len+=segs[k].len; }
+      else { legs.push(cur.len); turns.push(ang); cur={len:segs[k].len, brg:segs[k].brg}; }
+    }
+    legs.push(cur.len);
+    var steps=[];
+    for(var j=0;j<legs.length;j++){
+      steps.push('Walk about '+round5(legs[j])+' m.');
+      if(j<turns.length){
+        var a=turns[j], side=a<0?'left':'right', w=Math.abs(a);
+        steps.push(w<60?'Turn slightly '+side+'.' : w<120?'Turn '+side+'.' : 'Turn sharply '+side+' (almost back).');
+      }
+    }
+    steps.push('You have arrived: '+route.name+'.');
+    return [out[0]].concat(steps);
+  }
+  function routeText(r){
+    var t=r.name+' ('+fmtDist(r.dist)+', about '+Math.max(1,Math.round(r.dur/60))+' min walk)\n';
+    if(r.note) t+=r.note+'\n';
+    buildSteps(r).forEach(function(s,i){ t+=(i+1)+'. '+s+'\n'; });
+    (r.cps||[]).forEach(function(c,i){ t+='Checkpoint '+(i+1)+(c.at!=null?' (after about '+Math.round(c.at)+' m)':'')+': '+(c.note||'see photo')+'\n'; });
+    return t;
+  }
+
+  /* ---------- Indoor mode (steps + compass) ---------- */
+  function stepLenM(){ var v=parseFloat($('stepLen').value); if(!(v>=30 && v<=120)) v=70; return v/100; }
+  function onOrient(e){
+    var h=null;
+    if(typeof e.webkitCompassHeading==='number') h=e.webkitCompassHeading;
+    else if((e.absolute || e.type==='deviceorientationabsolute') && e.alpha!=null) h=(360-e.alpha)%360;
+    if(h===null) return;
+    if(hsmooth===null) hsmooth=h;
+    else { var d=((h-hsmooth+540)%360)-180; hsmooth=(hsmooth+d*0.2+360)%360; }
+    heading=hsmooth;
+  }
+  function onMotion(e){
+    if(!calibrating && !(recording && indoor)) return;
+    var a=e.accelerationIncludingGravity; if(!a || a.x==null) return;
+    var mag=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+    gAvg=gAvg*0.95+mag*0.05;
+    var prev=sFilt; sFilt=sFilt*0.6+(mag-gAvg)*0.4;
+    var now=Date.now();
+    if(prev<1.0 && sFilt>=1.0 && now-lastStepT>350){ lastStepT=now; if(calibrating) calStep(); else doStep(); }
+  }
+  function doStep(){
+    if(heading===null){ $('status').textContent='Compass not ready. Hold the phone flat and wave it in a figure 8.'; return; }
+    var len=stepLenM(), r=heading*Math.PI/180;
+    ipos.lat += (Math.cos(r)*len)/110540;
+    ipos.lng += (Math.sin(r)*len)/(111320*Math.cos(ipos.lat*Math.PI/180));
+    steps++; dist+=len;
+    pts.push({lat:ipos.lat,lng:ipos.lng,t:Date.now()});
+    liveLine.setLatLngs(pts.map(function(q){return [q.lat,q.lng];}));
+    if(!me){ me=L.marker([ipos.lat,ipos.lng],{icon:meIcon,zIndexOffset:1000}).addTo(map); } else me.setLatLng([ipos.lat,ipos.lng]);
+    map.panTo([ipos.lat,ipos.lng]);
+    $('sDist').textContent=fmtDist(dist); $('sPts').textContent=pts.length;
+    $('status').textContent='Indoor mode: '+steps+' steps';
+  }
+  function setIndoor(on){
+    if(on){
+      var base = pts.length ? pts[pts.length-1] : (me ? me.getLatLng() : map.getCenter());
+      ipos={lat:base.lat, lng:base.lng};
+      indoor=true; heading=null; hsmooth=null; sFilt=0; gAvg=9.8;
+      if(!motionOn){
+        window.addEventListener('devicemotion',onMotion);
+        window.addEventListener('deviceorientationabsolute',onOrient,true);
+        window.addEventListener('deviceorientation',onOrient,true);
+        motionOn=true;
+      }
+      if(accCircle) accCircle.setStyle({opacity:0,fillOpacity:0});
+      $('btnIndoor').classList.add('active'); $('btnIndoor').textContent='🏢 Indoor ON (tap for GPS)';
+      $('indoorHint').classList.remove('hide');
+      $('status').textContent='Indoor mode on. Walk normally with the phone held flat.';
+    } else {
+      indoor=false;
+      if(motionOn){
+        window.removeEventListener('devicemotion',onMotion);
+        window.removeEventListener('deviceorientationabsolute',onOrient,true);
+        window.removeEventListener('deviceorientation',onOrient,true);
+        motionOn=false;
+      }
+      if(accCircle) accCircle.setStyle({opacity:1,fillOpacity:.08});
+      $('btnIndoor').classList.remove('active'); $('btnIndoor').textContent='🏢 Indoor mode';
+      $('indoorHint').classList.add('hide');
+    }
+  }
+  $('btnIndoor').onclick=function(){
+    if(!recording) return;
+    if(indoor){ setIndoor(false); return; }
+    var reqs=[];
+    try{ if(window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission==='function') reqs.push(DeviceMotionEvent.requestPermission()); }catch(e){}
+    try{ if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function') reqs.push(DeviceOrientationEvent.requestPermission()); }catch(e){}
+    Promise.all(reqs).then(function(res){
+      if(res.some(function(x){return x!=='granted';})){ $('status').textContent='Motion/compass permission denied. Indoor mode needs it.'; return; }
+      setIndoor(true);
+    }).catch(function(){ $('status').textContent='This phone/browser cannot use motion sensors.'; });
+  };
+
+  /* ---------- Step length calibration ---------- */
+  var SLKEY = 'rsu_steplen_v1';
+  function setStepLen(cm){
+    $('stepLen').value = cm;
+    try{ localStorage.setItem(SLKEY, String(cm)); }catch(e){}
+  }
+  try{ var sv=parseFloat(localStorage.getItem(SLKEY)); if(sv>=30 && sv<=120) $('stepLen').value=Math.round(sv); }catch(e){}
+  $('stepLen').onchange=function(){
+    var v=parseFloat(this.value);
+    if(v>=30 && v<=120){ try{ localStorage.setItem(SLKEY, String(v)); }catch(e){} }
+  };
+  function calShow(){
+    $('calMsg').textContent='Walking... '+calSteps+' steps, '+Math.round(calDist)+' m by GPS. Walk about 40 steps in a straight line, then tap Stop & save.';
+  }
+  function calStep(){ if(!calFirst) return; calSteps++; calShow(); }
+  function calGps(lat,lng,acc){
+    if(acc>20){ $('calMsg').textContent='Weak GPS (±'+Math.round(acc)+' m). Stay in the open and wait for a stronger signal...'; return; }
+    if(!calFirst){ calFirst=[lat,lng]; calLast=calFirst; calDist=0; $('calMsg').textContent='GPS ready. Start walking in a straight line now.'; return; }
+    calLast=[lat,lng]; calDist=hav(calFirst,calLast); calShow();
+  }
+  function stopCal(save){
+    if(!calibrating) return;
+    calibrating=false;
+    window.removeEventListener('devicemotion',onMotion);
+    if(!recording && !following) stopWatch();
+    $('btnCal').textContent='Calibrate';
+    if(!save){ $('calMsg').textContent=''; return; }
+    if(calSteps<20 || calDist<12){
+      $('calMsg').textContent='Too short ('+calSteps+' steps, '+Math.round(calDist)+' m). Try again: walk about 40 steps in a straight line outside.';
+      return;
+    }
+    var cm=Math.round(calDist/calSteps*100);
+    if(cm<30 || cm>120){
+      $('calMsg').textContent='The result ('+cm+' cm) looks wrong, probably weak GPS or the phone moved a lot. Try again outside with a clear sky.';
+      return;
+    }
+    setStepLen(cm);
+    $('calMsg').textContent='Done! Your step length is '+cm+' cm and it is saved. Calibrate again if you wear different shoes or walk faster.';
+  }
+  $('btnCal').onclick=function(){
+    if(recording){ $('calMsg').textContent='Stop recording first, then calibrate.'; return; }
+    if(calibrating){ stopCal(true); return; }
+    var reqs=[];
+    try{ if(window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission==='function') reqs.push(DeviceMotionEvent.requestPermission()); }catch(e){}
+    Promise.all(reqs).then(function(res){
+      if(res.some(function(x){return x!=='granted';})){ $('calMsg').textContent='Motion permission denied. Calibration needs it.'; return; }
+      calibrating=true; calSteps=0; calDist=0; calFirst=null; calLast=null; sFilt=0; gAvg=9.8; lastStepT=0;
+      window.addEventListener('devicemotion',onMotion);
+      startWatch();
+      $('btnCal').textContent='Stop & save';
+      $('calMsg').textContent='Getting GPS... stand outside in the open until it says GPS ready, then walk.';
+    }).catch(function(){ $('calMsg').textContent='This phone/browser cannot use motion sensors.'; });
+  };
+  $('btnHeight').onclick=function(){
+    var h=parseFloat($('heightIn').value);
+    if(!(h>=120 && h<=220)){ $('calMsg').textContent='Enter your height in cm, for example 170.'; return; }
+    var cm=Math.round(h*0.415);
+    setStepLen(cm);
+    $('calMsg').textContent='Step length set to about '+cm+' cm from your height. This is an estimate, so use Calibrate for better accuracy.';
+  };
+
+  /* ---------- Checkpoint photos ---------- */
+  function resizePhoto(file,cb){
+    var img=new Image(), url=URL.createObjectURL(file);
+    img.onload=function(){
+      var s=Math.min(1,640/Math.max(img.width,img.height));
+      var c=document.createElement('canvas'); c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);
+      cb(c.toDataURL('image/jpeg',0.55));
+    };
+    img.onerror=function(){ URL.revokeObjectURL(url); $('status').textContent='Could not read that photo.'; };
+    img.src=url;
+  }
+  $('btnCp').onclick=function(){ if(recording) $('cpFile').click(); };
+  $('cpFile').onchange=function(e){
+    var f=e.target.files[0]; e.target.value=''; if(!f) return;
+    var pos = pts.length ? {lat:pts[pts.length-1].lat, lng:pts[pts.length-1].lng} : (me ? {lat:me.getLatLng().lat, lng:me.getLatLng().lng} : null);
+    if(!pos){ $('status').textContent='Wait for GPS before adding a checkpoint.'; return; }
+    var note=prompt('Note for this spot (optional), e.g. Room 12 is behind the blue door','')||'';
+    resizePhoto(f,function(data){
+      var c={lat:pos.lat, lng:pos.lng, note:note.trim(), photo:data, at:dist};
+      cps.push(c);
+      L.marker([c.lat,c.lng],{icon:cpIcon}).addTo(cpMarkers);
+      $('status').textContent='Checkpoint '+cps.length+' added.';
+    });
+  };
+
+  /* ---------- Saved routes ---------- */
+  function showRoute(r){
+    viewLayer.clearLayers(); liveLine.setLatLngs([]);
+    var ll=r.pts.map(function(p){return [p.lat,p.lng];});
+    L.polyline(ll,{color:'#0b5fff',weight:6,opacity:.9}).addTo(viewLayer);
+    L.circleMarker(ll[0],{radius:9,color:'#fff',weight:3,fillColor:'#14a44d',fillOpacity:1}).bindTooltip('Start',{permanent:true,direction:'top'}).addTo(viewLayer);
+    L.circleMarker(ll[ll.length-1],{radius:9,color:'#fff',weight:3,fillColor:'#e03131',fillOpacity:1}).bindTooltip(esc(r.name),{permanent:true,direction:'top'}).addTo(viewLayer);
+    (r.cps||[]).forEach(function(c,i){
+      var h='<b>'+esc(c.note||('Checkpoint '+(i+1)))+'</b>'+(safePhoto(c.photo)?'<br><img src="'+c.photo+'" style="width:180px;border-radius:8px;margin-top:4px">':'');
+      L.marker([c.lat,c.lng],{icon:cpIcon}).bindPopup(h).addTo(viewLayer);
+    });
+    map.fitBounds(L.latLngBounds(ll),{padding:[40,40]});
+  }
+  function render(){
+    var all=load(), box=$('list'); box.innerHTML='';
+    var total=all.length, q=($('search').value||'').trim().toLowerCase();
+    if(q) all=all.filter(function(r){ return (String(r.name)+' '+String(r.note||'')).toLowerCase().indexOf(q)>=0; });
+    if(!all.length){ box.innerHTML='<div class="empty">'+(total?'No routes match your search.':'No routes yet. Record your first one in the Record tab.')+'</div>'; return; }
+    all.forEach(function(r){
+      var d=document.createElement('div'); d.className='route';
+      d.innerHTML='<h3>'+esc(r.name)+'</h3><p>'+fmtDist(r.dist)+' &middot; '+Math.max(1,Math.round(r.dur/60))+' min &middot; '+new Date(r.date).toLocaleDateString()+(r.note?'<br>'+esc(r.note):'')+'</p>'
+        +'<div class="row"><button class="btn" data-a="view">View on map</button><button class="btn grey" data-a="steps">Directions</button><button class="btn grey" data-a="walk">Walk it</button><button class="btn grey" data-a="share">Share</button><button class="btn red" data-a="del">Delete</button></div>'
+        +'<ol class="steps hide"></ol><div class="cps"></div>';
+      var g=d.querySelector('.cps');
+      (r.cps||[]).forEach(function(c,i){
+        var cd=document.createElement('div'); cd.className='cp';
+        if(safePhoto(c.photo)){ var im=document.createElement('img'); im.src=c.photo; cd.appendChild(im); }
+        var tx=document.createElement('div');
+        tx.textContent=(c.at!=null?'~'+Math.round(c.at)+' m: ':'')+(c.note||('Checkpoint '+(i+1)));
+        cd.appendChild(tx);
+        cd.onclick=function(){ following=false; showRoute(r); map.setView([c.lat,c.lng],19); };
+        g.appendChild(cd);
+      });
+      d.querySelector('[data-a=view]').onclick=function(){ following=false; showRoute(r); };
+      d.querySelector('[data-a=steps]').onclick=function(){
+        var ol=d.querySelector('.steps');
+        if(ol.classList.contains('hide')){ ol.innerHTML=buildSteps(r).map(function(s){return '<li>'+esc(s)+'</li>';}).join(''); ol.classList.remove('hide'); }
+        else ol.classList.add('hide');
+      };
+      d.querySelector('[data-a=walk]').onclick=function(){
+        showRoute(r); following=true; startWatch();
+        $('status').textContent='Follow the blue line. Your position is the blue dot.';
+      };
+      d.querySelector('[data-a=share]').onclick=function(){
+        var txt=routeText(r);
+        if(navigator.share){ navigator.share({title:r.name,text:txt}).catch(function(){}); }
+        else if(navigator.clipboard){ navigator.clipboard.writeText(txt).then(function(){alert('Directions copied. Paste them in WhatsApp.');}); }
+        else prompt('Copy:',txt);
+      };
+      d.querySelector('[data-a=del]').onclick=function(){
+        if(confirm('Delete "'+r.name+'"?')){ store(load().filter(function(x){return x.id!==r.id;})); viewLayer.clearLayers(); render(); }
+      };
+      box.appendChild(d);
+    });
+  }
+
+  /* ---------- Export / import (share routes between students) ---------- */
+  $('btnExport').onclick=function(){
+    var blob=new Blob([JSON.stringify(load())],{type:'application/json'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='rsu-routes.json'; a.click();
+  };
+  $('btnImport').onclick=function(){ $('fileIn').click(); };
+  $('fileIn').onchange=function(e){
+    var f=e.target.files[0]; if(!f) return;
+    var rd=new FileReader();
+    rd.onload=function(){
+      try{
+        var inc=JSON.parse(rd.result), all=load(), ids={};
+        all.forEach(function(r){ids[r.id]=1;});
+        var n=0;
+        inc.forEach(function(r){ if(r&&r.pts&&r.name&&!ids[r.id]){ all.push(r); n++; } });
+        store(all); render(); alert(n+' route(s) imported.');
+      }catch(err){ alert('That file is not a valid routes file.'); }
+    };
+    rd.readAsText(f); e.target.value='';
+  };
+
+  /* ---------- Tabs ---------- */
+  function showTab(t){
+    var rec=t==='rec';
+    $('recView').classList.toggle('hide',!rec); $('savedView').classList.toggle('hide',rec);
+    $('tabRec').classList.toggle('on',rec); $('tabSaved').classList.toggle('on',!rec);
+    if(!rec) render();
+  }
+  $('tabRec').onclick=function(){ showTab('rec'); };
+  $('tabSaved').onclick=function(){ showTab('saved'); };
+
+  renderChips();
+  $('search').oninput=function(){ render(); };
+
+  // show the user's position on open (one quick fix, then stop to save battery)
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(function(p){ onPos(p); }, function(){}, {enableHighAccuracy:true,timeout:15000});
+  }
+})();
+</script>
+</body>
+</html>
