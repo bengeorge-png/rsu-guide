@@ -52,7 +52,8 @@
   .chip{padding:7px 11px;border:0;border-radius:999px;background:#e7ebf5;color:#16203a;font-size:13px;font-weight:600}
   .chip.add{background:#fff;border:1px dashed #0b5fff;color:#0b5fff}
   #search{margin:0 0 10px 0}
-  #offAlert{position:fixed;top:42px;left:0;right:0;z-index:6;background:#e03131;color:#fff;padding:10px 14px;font-weight:700;font-size:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  #navBar{position:fixed;top:42px;left:0;right:0;z-index:6;background:#0b2a66;color:#fff;padding:10px 14px;font-weight:700;font-size:15px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  #offAlert{position:fixed;top:42px;left:0;right:0;z-index:7;background:#e03131;color:#fff;padding:10px 14px;font-weight:700;font-size:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
   .sc{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:8px;font-size:13px;flex-wrap:wrap}
   .sc .btn{padding:6px 10px;font-size:12px}
 </style>
@@ -60,6 +61,7 @@
 <body>
 <header><span>RSU Campus Guide</span><small>Record the way. Never get lost.</small></header>
 <div id="map"></div>
+<div id="navBar" class="hide"></div>
 <div id="offAlert" class="hide"></div>
 
 <div id="panel">
@@ -131,6 +133,8 @@
   var cpMarkers = L.layerGroup().addTo(map);
   var calibrating = false, calSteps = 0, calFirst = null, calLast = null, calDist = 0;
   var followRoute = null, offState = false, offTrail = [], lastOn = null, offLine = null, backLine = null, shortcutRoute = null;
+  var navLayer = L.layerGroup().addTo(map);
+  var navC = null, navSnap = null, navMax = 0, reachedPath = false, followZoomed = false, mainLine = null, arrivedShown = false;
   var cpIcon = L.divIcon({className:'', html:'<div class="cpdot"></div>', iconSize:[16,16], iconAnchor:[8,8]});
 
   function $(id){ return document.getElementById(id); }
@@ -208,7 +212,8 @@
       $('sDist').textContent=fmtDist(dist); $('sPts').textContent=pts.length;
     } else if(following){
       checkOffRoute(lat,lng,acc);
-      map.panTo([lat,lng]);
+      navProgress(lat,lng,acc);
+      followCamera(lat,lng);
     }
   }
 
@@ -221,7 +226,7 @@
       $('btnStart').textContent='■ Stop'; $('btnStart').classList.add('stop');
       $('sDist').textContent='0 m'; $('sPts').textContent='0'; $('sTime').textContent='00:00';
       timer=setInterval(function(){ $('sTime').textContent=fmtTime((Date.now()-t0)/1000); },1000);
-      $('status').textContent='Getting GPS signal...'; $('tools').classList.add('on');
+      $('status').textContent='Getting GPS signal...'; $('tools').classList.add('on'); if(me) map.setView(me.getLatLng(),19);
       startWatch();
     } else {
       recording=false; clearInterval(timer); stopWatch(); setIndoor(false); $('tools').classList.remove('on');
@@ -229,7 +234,7 @@
       if(pts.length<2){ $('status').textContent='Route too short. Try again and walk a bit further.'; return; }
       if(shortcutRoute && !prepShortcut()) return;
       $('saveTitle').textContent = shortcutRoute ? 'Save this shortcut' : 'Save this route';
-      $('status').textContent = shortcutRoute ? 'Done! Give your shortcut a name (optional), then save it.' : 'Done! Name your route below.';
+      $('status').textContent = shortcutRoute ? 'Done! Give your shortcut a name (optional), then save it.' : (dist<10 ? 'Done! This route is only '+Math.round(dist)+' m. For a proper route, walk at least 20 m. Save it anyway or discard it.' : 'Done! Name your route below.');
       $('saveBox').classList.remove('hide'); $('rName').focus();
     }
   };
@@ -244,6 +249,7 @@
     $('status').textContent='Saved! Find it under "Saved routes".';
     pts=[]; cps=[]; cpMarkers.clearLayers(); liveLine.setLatLngs([]);
     showTab('saved');
+    showRoute(all[0]);
   };
   $('btnDiscard').onclick = function(){
     pts=[]; cps=[]; cpMarkers.clearLayers(); liveLine.setLatLngs([]); $('saveBox').classList.add('hide');
@@ -499,6 +505,8 @@
   /* ---------- Off-route warning (red line) ---------- */
   function resetOff(){
     followRoute=null; offState=false; offTrail=[]; lastOn=null;
+    navLayer.clearLayers(); navC=null; navSnap=null; navMax=0; reachedPath=false; arrivedShown=false;
+    $('navBar').classList.add('hide');
     if(offLine) offLine.setLatLngs([]);
     if(backLine) backLine.setLatLngs([]);
     $('offAlert').classList.add('hide');
@@ -512,6 +520,19 @@
     });
     if(!bestN) return;
     var limit=Math.max(15, Math.min(acc,30)+8);
+    if(!reachedPath){
+      if(best<=limit){
+        reachedPath=true;
+        if(backLine) backLine.setLatLngs([]);
+      } else {
+        var sp=followRoute.pts[0];
+        $('navBar').textContent='Walk to the start of the path: '+fmtDist(hav([lat,lng],[sp.lat,sp.lng]))+' away';
+        $('navBar').classList.remove('hide');
+        if(!backLine) backLine=L.polyline([],{color:'#e03131',weight:3,opacity:.9,dashArray:'6 8'}).addTo(map);
+        backLine.setLatLngs([[lat,lng],[bestN.lat,bestN.lng]]);
+        return;
+      }
+    }
     if(!offState && best>limit){
       offState=true; offTrail=lastOn ? [lastOn] : [];
       try{ if(navigator.vibrate) navigator.vibrate([300,150,300]); }catch(e){}
@@ -534,6 +555,50 @@
       $('offAlert').classList.remove('hide');
     } else {
       lastOn=[lat,lng];
+    }
+  }
+
+  /* ---------- Navigation view (Google Maps style) ---------- */
+  function drawNav(){
+    navLayer.clearLayers();
+    if(!followRoute) return;
+    var ll=followRoute.pts.map(function(p){return [p.lat,p.lng];});
+    if(!navSnap){ L.polyline(ll,{color:'#0b5fff',weight:7,opacity:.95}).addTo(navLayer); return; }
+    var done=ll.slice(0,navSnap.i+1).concat([[navSnap.lat,navSnap.lng]]);
+    var rem=[[navSnap.lat,navSnap.lng]].concat(ll.slice(navSnap.i+1));
+    if(done.length>1) L.polyline(done,{color:'#9aa5b8',weight:6,opacity:.9}).addTo(navLayer);
+    L.polyline(rem,{color:'#0b5fff',weight:7,opacity:.95}).addTo(navLayer);
+  }
+  function navProgress(lat,lng,acc){
+    if(!followRoute || acc>40 || !reachedPath) return;
+    var P=followRoute.pts, n=nearestOnPath(lat,lng,P);
+    if(!n) return;
+    if(!navC) navC=cumDist(P);
+    var total=navC[navC.length-1], limit=Math.max(15, Math.min(acc,30)+8);
+    var pd=posDist(navC,n);
+    if(n.d<=limit && pd>=navMax-15 && (pd>navMax || !navSnap)){ navMax=Math.max(navMax,pd); navSnap=n; drawNav(); }
+    if(offState) return;
+    var remain=Math.max(0,total-navMax), nb=$('navBar');
+    var pace=(followRoute.dist>0 && followRoute.dur>0) ? followRoute.dur/followRoute.dist : 0.8;
+    pace=Math.max(0.5,Math.min(2,pace));
+    if(remain<=8 && navMax>=total*0.5){
+      nb.textContent='🎉 You have arrived: '+followRoute.name;
+      if(!arrivedShown){ arrivedShown=true; try{ if(navigator.vibrate) navigator.vibrate([200,100,200,100,400]); }catch(e){} }
+    } else {
+      nb.textContent='🧭 '+fmtDist(remain)+' to go · about '+Math.max(1,Math.round(remain*pace/60))+' min';
+    }
+    nb.classList.remove('hide');
+  }
+  function followCamera(lat,lng){
+    if(!followRoute) return;
+    if(!reachedPath){
+      var sp=followRoute.pts[0];
+      map.fitBounds(L.latLngBounds([[lat,lng],[sp.lat,sp.lng]]),{padding:[70,70],maxZoom:19});
+      followZoomed=false;
+    } else if(!followZoomed){
+      map.setView([lat,lng],19); followZoomed=true;
+    } else {
+      map.panTo([lat,lng]);
     }
   }
 
@@ -595,7 +660,7 @@
   function showRoute(r){
     viewLayer.clearLayers(); liveLine.setLatLngs([]); resetOff();
     var ll=r.pts.map(function(p){return [p.lat,p.lng];});
-    L.polyline(ll,{color:'#0b5fff',weight:6,opacity:.9}).addTo(viewLayer);
+    mainLine=L.polyline(ll,{color:'#0b5fff',weight:7,opacity:.95}).addTo(viewLayer);
     L.circleMarker(ll[0],{radius:9,color:'#fff',weight:3,fillColor:'#14a44d',fillOpacity:1}).bindTooltip('Start',{permanent:true,direction:'top'}).addTo(viewLayer);
     L.circleMarker(ll[ll.length-1],{radius:9,color:'#fff',weight:3,fillColor:'#e03131',fillOpacity:1}).bindTooltip(esc(r.name),{permanent:true,direction:'top'}).addTo(viewLayer);
     (r.cps||[]).forEach(function(c,i){
@@ -672,7 +737,11 @@
         else ol.classList.add('hide');
       };
       d.querySelector('[data-a=walk]').onclick=function(){
-        showRoute(r); following=true; followRoute=r; startWatch();
+        showRoute(r); following=true; followRoute=r; followZoomed=false;
+        if(mainLine) viewLayer.removeLayer(mainLine);
+        drawNav();
+        $('navBar').textContent='Getting your position...'; $('navBar').classList.remove('hide');
+        startWatch();
         $('status').textContent='Follow the blue line. Your position is the blue dot.';
       };
       d.querySelector('[data-a=share]').onclick=function(){
